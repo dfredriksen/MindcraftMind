@@ -16,6 +16,8 @@ class Actions():
   slot7 = 0x08
   slot8 = 0x09
   slot9 = 0x0A
+  run_swim = 0x1D
+  stealth = 0x2A
 
   def __init__(self):
     return None
@@ -86,6 +88,22 @@ class Actions():
       "method": mind.key_press,
       "arguments": [self.slot9]
     }, {
+      "name": 'activate run/swim',
+      "method": mind.key_down,
+      "arguments": [self.run_swim]
+    }, {
+      "name": 'activate stealth/dive',
+      "method": mind.key_down,
+      "arguments": [self.stealth]
+    }, {
+      "name": 'release run/swim',
+      "method": mind.key_up,
+      "arguments": [self.run_swim]
+    }, {
+      "name": 'release stealth/dive',
+      "method": mind.key_up,
+      "arguments": [self.stealth]
+    },{
       "name": 'left click',
       "method": mind.mouse_click,
       "arguments": [0, 0, 'left']

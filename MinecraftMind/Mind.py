@@ -61,6 +61,12 @@ class Mind():
     time.sleep(delay)
     release_key(key)
   
+  def key_down(self, key):
+    press_key(key)
+    
+  def key_up(self, key):
+    release_key(key)
+    
   def mouse_click(self, x, y, button='left', delay=0.2):
     mouse_down(x, y, button)
     time.sleep(delay)
