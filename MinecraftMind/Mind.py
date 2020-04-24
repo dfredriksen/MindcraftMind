@@ -1,4 +1,4 @@
-import subprocess_maximize as subprocess, time, pyautogui, pydirectinput
+import subprocess_maximize as subprocess, time, pyautogui
 from Inputs import press_key, release_key, mouse_move_to, mouse_down, mouse_up
 from WindowMgr import WindowMgr
 from Actions import Actions

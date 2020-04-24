@@ -1,6 +1,5 @@
 import os
 import ctypes
-import win32api
 import time
 
 PUL = ctypes.POINTER(ctypes.c_ulong)
