@@ -2,3 +2,5 @@ pywin32
 pyautogui
 subprocess_maximize
 opencv-python
+pytesseract
+cv

@@ -1,3 +1,4 @@
+MANIFEST.in
 README.md
 setup.py
 MinecraftMind.egg-info/PKG-INFO
@@ -5,3 +6,5 @@ MinecraftMind.egg-info/SOURCES.txt
 MinecraftMind.egg-info/dependency_links.txt
 MinecraftMind.egg-info/requires.txt
 MinecraftMind.egg-info/top_level.txt
+MinecraftMind/assets/multiplayer_button.png
+MinecraftMind/assets/play_button.png
