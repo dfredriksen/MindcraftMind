@@ -143,7 +143,13 @@ class Mind():
 
   def rotate(self, x, y):
     self.output('Move to: (' + str(x) + ', ' + str(y) + ')')
-    mouse_move_to(x, y)
+    cx, cy = win32gui.GetCursorPos()
+    xx = cx+x
+    yy = cy+y
+    ex = self.resolution[0] < cx
+    ey = self.resolution[1] < cy
+    if(not self.inventory or not (ex and ey )):
+      mouse_move_to(x, y)
 
   def no_op(self, delay = 0):
     time.sleep(delay)
@@ -357,7 +363,7 @@ class Actions():
         "name": 'drop',
         "method": mind.key_press,
         "arguments": [self.drop],
-        }    
+        },
         {
         "name": 'inventory',
         "method": mind.toggle_inventory,
