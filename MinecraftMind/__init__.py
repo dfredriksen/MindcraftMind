@@ -1,7 +1,11 @@
-import subprocess_maximize as subprocess, os, ctypes, time, pytesseract, win32gui, win32api, win32con, pyautogui, re
+import subprocess_maximize as subprocess, os, ctypes, time, pytesseract
+import win32gui, win32api, win32con, pyautogui, re
 import numpy as np
 from PIL import Image
 from threading import Thread
+import boto3
+from config import AWS_ACCESS_KEY, AWS_SECRET_KEY, S3_LOCATION
+from config import S3_BUCKET_NAME, SCREENSHOT_PATH
 
 class Mind():
   proc = None
@@ -546,3 +550,25 @@ class WindowMgr():
     def get_hwnd(self):
         """return hwnd for further use"""
         return self._handle
+
+timestamp_start = time.time()
+s3 = boto3.client(
+  "s3",
+  aws_access_key_id = AWS_ACCESS_KEY,
+  aws_secret_access_key = AWS_SECRET_KEY
+)
+
+bucket_resource = s3
+
+bucket_resource.upload_file(
+  Bucket = S3_BUCKET_NAME,
+  Filename = os.path.join(SCREENSHOT_PATH, '2020-05-01_11.59.56.png'),
+  Key='trial1.png'
+)
+
+timestamp_end = time.time()
+
+print(str(timestamp_start - timestamp_end) + ' unix timestamp ticks')
+
+print(time.time())
+print(time.time())
