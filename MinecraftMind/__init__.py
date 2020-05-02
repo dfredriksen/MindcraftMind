@@ -1,13 +1,20 @@
-import subprocess_maximize as subprocess, os, ctypes, time
-import win32gui, win32api, win32con, pyautogui, re
+import subprocess_maximize as subprocess, os, time
+import win32gui, win32api, pyautogui
 import numpy as np
 from PIL import Image
-from threading import Thread
-import boto3
-from config import AWS_ACCESS_KEY, AWS_SECRET_KEY, S3_LOCATION
-from config import S3_BUCKET_NAME, SCREENSHOT_PATH, DONE_STATEPATH, RESIZE_SIZE
-from cnn_done import CNNDone, detect_is_done
+from config import AWS_ACCESS_KEY, AWS_SECRET_KEY, S3_LOCATION, MINECRAFT_LAUNCHER_PATH
+from config import S3_BUCKET_NAME, SCREENSHOT_PATH, DONE_STATEPATH, ACTION_STATEPATH, RESIZE_SIZE
+from config import EPS_START, EPS_END, EPS_DECAY, CLEAN_THREADS
 import torch
+import math
+from itertools import count
+import random
+from mind_dqn import DQN
+from mind_actions import ActionExecutor, Actions, process_state_actions
+from mind_cnn_done import CNNDone, detect_is_done
+from mind_windows import WindowMgr
+from mind_input import mouse_move_to, mouse_down, mouse_up, press_key, release_key
+from mind_memory import Memory
 
 class Mind():
   proc = None
@@ -29,13 +36,170 @@ class Mind():
   def __init__(self, verbose = 'print', logger=None):
     self.verbose_mode = verbose
     self.logger = logger
+    self.detect_resolution()
+    self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    self.window = WindowMgr()
+    self.initialize_done_detector()
+    self.initialize_actions()
+    self.trial = time.time()
+    self.initialize_policy_net()    
+    self.memory_threads = []
+
+  def initialize_policy_net(self):
+    self.output('Initializing Policy DQN...')
+    self.policy_net = DQN(self.sight_height, self.sight_width, self.n_actions).to(self.device)
+    if os.path.isfile(ACTION_STATEPATH):
+      self.output('Loading weights from file')
+      self.policy_net.load_state_dict(torch.path(ACTION_STATEPATH))
+      self.policy_net.eval()
+
+  def initialize_actions(self):
+    self.output('Initializing Available Actions...')
+    self.enumerate_actions()    
+    n_actions = 0
+    for actions in self.action_spaces:
+      n_actions = n_actions + actions
+    self.n_actions = n_actions
+
+  def initialize_done_detector(self):
+    self.output('Initializing Done Detector...')
+    self.done_model = CNNDone()
+    self.output('Loading Done Detector Model Params')
+    self.done_model.load_state_dict(torch.load(DONE_STATEPATH))
+    
+  def detect_resolution(self):
     self.output('Detecting resolution...')
     self.resolution = pyautogui.size()
+    assert self.resolution[0] == 800 and self.resolution[1] == 600, "Only 800 x 600 resolution is supported"
+    self.sight_width = int(RESIZE_SIZE * (self.resolution[0]/self.resolution[1]))
+    self.sight_height = RESIZE_SIZE
     self.output('Resolution: ' + str(self.resolution[0]) + ' x ' + str(self.resolution[1]))
-    self.window = WindowMgr()
-    self.enumerate_actions()
-    pyautogui.FAILSAFE = False
+    self.output('Resized Resolution: ' + str(self.sight_width) + ' x ' + str(self.sight_height))
+
+  def select_action(self, state, steps_done):
+    sample = random.random()
+    eps_threshold = EPS_END + (EPS_START - EPS_END) * \
+        math.exp(-1. * steps_done / EPS_DECAY)
+    if sample > eps_threshold:
+        with torch.no_grad():
+          # t.max(1) will return largest column value of each row.
+          # second column on max result is index of where max element was
+          # found, so we pick action with the larger expecte,d reward.
+          #return policy_net(state).max(1)[1].view(1, 1)
+          output = self.policy_net(state)
+          return process_state_actions(output, self.action_spaces)
+    else:
+        random_actions = []
+        for actions in self.action_spaces:
+          random_actions.append(random.randrange(actions))
+        return torch.tensor([random_actions], device=self.device, dtype=torch.long)
+
+  def learning_loop(self):
+    i_episode = -1
+    try:
+      while True:
+        i_episode = i_episode + 1
+        self.output('Starting episode ' + str(i_episode) + '...')
+        self.respawn()
+        last_screen = self.get_screen()
+        current_screen = self.get_screen()
+        state = current_screen - last_screen
+        steps_done = 0
+        for t in count():
+            # Select and perform an action
+            action = self.select_action(state, steps_done)
+            action_list = action.numpy()[0]
+            self.output(action_list)
+            environment, reward, done, filename = self.step(action_list)
+            steps_done = steps_done + 1
+            self.output('Step: ' + str(steps_done))
+            # Observe new state
+            last_screen = current_screen
+            current_screen = self.get_screen()
+            if not done:
+                state = current_screen - last_screen
+            else:
+                state = None
+                
+            memory = Memory(environment, filename, done, reward, self.trial, i_episode, steps_done, self.memory_threads)
+            memory.start()
+            self.memory_threads.append(memory)
+
+            if done:
+                self.output('Agent has died...')
+                self.clean_memory_threads()
+                break
+            
+            if steps_done % CLEAN_THREADS == 0:
+                self.clean_memory_threads()
+    except KeyboardInterrupt:
+      print("Loop terminated")
+      
+  def clean_memory_threads(self):
+    new_memory_threads = []
+    for memory_thread in self.memory_threads:
+      if memory_thread.is_alive():
+        new_memory_threads.append(memory_thread)
+    self.memory_threads = new_memory_threads
+
+  def render(self):
+    if self.state is None:
+      state = np.array(Image.new('RGBA',(self.sight_width,self.sight_height), (255, 255, 255, 255)))
+    else:
+      state = np.array(self.state)  
+    return state
+
+  def get_screen(self):
+    # Transpose it into torch order (CHW).
+    screen = self.render().transpose((2, 0, 1))
+    screen = np.ascontiguousarray(screen, dtype=np.float32) / 255
+    screen = torch.from_numpy(screen)
+    # Resize, and add a batch dimension (BCHW)
+    result = screen.unsqueeze(0).to(self.device)
+    return result
+
+  def step(self, action):
+    threads = []
+    for index, action_item in enumerate(action):
+      action_thread = self.perform_action(self.actions[index][action_item])
+      threads.append(action_thread)
     
+    for thread in threads:
+      thread.join()
+
+    im = self.get_state()
+    r_im = self.done_model.process_image(im)
+    self.state = r_im
+    c_im = self.done_model.crop_image(im, r_im)
+    done = detect_is_done(c_im, self.done_model)
+    reward = 0
+    if done:
+      reward = -100 
+    return self.state, reward, done, im.filename
+
+  def get_state(self):
+    im = None
+    filename = ""
+    files = []
+    while im == None:
+      self.look()
+      while len(files) == 0:
+        files = os.listdir(SCREENSHOT_PATH)
+        if(len(files) > 0):
+          files.sort(reverse=True)
+          filename = files[0]
+          state = os.path.join(SCREENSHOT_PATH, filename)
+      retries = 0
+      while im == None:
+        try:
+          im = Image.open(state)
+        except: 
+          retries = retries + 1
+          time.sleep(0.1)
+          if retries > 100:
+            break
+    return im
+
   def focus_minecraft_window(self, title='Minecraft 1*'):
     self.output('Focus window matching: ' + title)
     self.window.find_window_wildcard(title)
@@ -149,8 +313,6 @@ class Mind():
   def rotate(self, x, y):
     self.output('Move to: (' + str(x) + ', ' + str(y) + ')')
     cx, cy = win32gui.GetCursorPos()
-    xx = cx+x
-    yy = cy+y
     ex = self.resolution[0] < cx
     ey = self.resolution[1] < cy
     if(not self.inventory or not (ex and ey )):
@@ -158,38 +320,7 @@ class Mind():
 
   def no_op(self, delay = 0):
     time.sleep(delay)
-
-
-  def is_dead(self, path):
-    wait_count = 0
-    im = None
-    while im is None:
-      wait_count = wait_count + 1    
-      try:
-        im = Image.open(path)
-      except:
-        time.sleep(0.01)
-        if(wait_count > 100):
-          break
   
-    self.output('Checking if agent died...')
-    x = int(self.resolution[0] * 0.390625)
-    y = int(self.resolution[1] * 0.203703)
-    x2 = int(self.resolution[0] * 0.598958)
-    y2 = int(self.resolution[1] * 0.305555)
-    width = x2 - x
-    height = y2 - y
-    im2 = im.crop((x, y, x2, y2))
-    im2 = im2.convert("1", dither=Image.NONE).resize((int(width / 2), int(height / 2)))
-    self.output(text)
-    died = text.find('died') > -1
-    self.output('Died: ' + str(died))
-    if died and not self.inventory:
-        self.mouse_x = 0
-        self.mouse_y = 0
-    return died
-  
-
   def respawn(self):
     self.output('Respawning....')
     self.mouse_active['mode'] = 'game'
@@ -234,374 +365,3 @@ class Mind():
     action_thread = ActionExecutor(action)
     action_thread.start()
     return action_thread
-
-
-class ActionExecutor(Thread):
-
-  def __init__(self, action):
-    Thread.__init__(self)
-    self.action = action
-
-  def run(self):
-    self.action["method"](*self.action["arguments"])
-
-
-class Actions():
-
-  forward = 0x11
-  left = 0x1E
-  right = 0x20
-  back = 0x1F
-  drop = 0x10
-  jump = 0x39
-  inventory = 0x12
-  slot1 = 0x02
-  slot2 = 0x03
-  slot3 = 0x04
-  slot4 = 0x05
-  slot5 = 0x06
-  slot6 = 0x07
-  slot7 = 0x08
-  slot8 = 0x09
-  slot9 = 0x0A
-  run_swim = 0x1D
-  stealth = 0x2A
-  screenshot = 0x3C
-
-  def __init__(self):
-    return None
-
-  def enumerate_actions(self, mind):
-    action_list = [
-      [
-        {
-        "name": 'move forward',
-        "method": mind.key_press,
-        "arguments": [self.forward],
-        },{ 
-        "name": 'strafe left',
-        "method": mind.key_press,
-        "arguments": [self.left],
-        },{
-        "name": 'strafe right',
-        "method": mind.key_press,
-        "arguments": [self.right],
-        },{
-        "name": 'backpedal',
-        "method": mind.key_press,
-        "arguments": [self.back],
-        }
-      ], 
-      [
-        {
-        "name": 'jump',
-        "method": mind.key_press,
-        "arguments": [self.jump],
-        }], 
-        [{
-        "name": 'run/swim',
-        "method": mind.key_toggle,
-        "arguments": [self.run_swim],
-        }, {
-        "name": 'stealth/dive',
-        "method": mind.key_toggle,
-        "arguments": [self.stealth],
-        }
-      ],
-      [
-        {
-        "name": 'left click',
-        "method": mind.mouse_click,
-        "arguments": [0, 0, 'left'],
-        },{
-        "name": 'right click',
-        "method": mind.mouse_click,
-        "arguments": [0, 0, 'right'],
-        },{
-        "name": 'left mouse',
-        "method": mind.mouse_toggle,
-        "arguments": ['left'],
-        },{
-        "name": 'right mouse',
-        "method": mind.mouse_toggle,
-        "arguments": ['right'],
-        }
-      ],
-      [
-        {
-        "name": 'rotate right',
-        "method": mind.rotate,
-        "arguments": [80, 0]
-        }, {
-        "name": 'rotate left',
-        "method": mind.rotate,
-        "arguments": [-80, 0]
-        }, {
-        "name": 'rotate up',
-        "method": mind.rotate,
-        "arguments": [0, -40]
-        }, {
-        "name": 'rotate down',
-        "method": mind.rotate,
-        "arguments": [0, 40]
-        }, {
-        "name": 'rotate right-up',
-        "method": mind.rotate,
-        "arguments": [80, -40]
-        }, {
-        "name": 'rotate right-down',
-        "method": mind.rotate,
-        "arguments": [80, 40]
-        }, {
-        "name": 'rotate left-up',
-        "method": mind.rotate,
-        "arguments": [-80, -40]
-        }, {
-        "name": 'rotate left-down',
-        "method": mind.rotate,
-        "arguments": [-80, -40]
-        }
-      ],
-      [
-        {
-        "name": 'drop',
-        "method": mind.key_press,
-        "arguments": [self.drop],
-        },
-        {
-        "name": 'inventory',
-        "method": mind.toggle_inventory,
-        "arguments": [self.inventory],
-        }, {
-        "name": 'wield hotbar1',
-        "method": mind.key_press,
-        "arguments": [self.slot1],
-        }, {
-        "name": 'wield hotbar2',
-        "method": mind.key_press,
-        "arguments": [self.slot2],
-        }, {
-        "name": 'wield hotbar3',
-        "method": mind.key_press,
-        "arguments": [self.slot3],
-        }, {
-        "name": 'wield hotbar4',
-        "method": mind.key_press,
-        "arguments": [self.slot4],
-        }, {
-        "name": 'wield hotbar5',
-        "method": mind.key_press,
-        "arguments": [self.slot5],
-        }, {
-        "name": 'wield hotbar6',
-        "method": mind.key_press,
-        "arguments": [self.slot6],
-        }, {
-        "name": 'wield hotbar7',
-        "method": mind.key_press,
-        "arguments": [self.slot7],
-        }, {
-        "name": 'wield hotbar8',
-        "method": mind.key_press,
-        "arguments": [self.slot8],
-        }, {
-        "name": 'wield hotbar9',
-        "method": mind.key_press,
-        "arguments": [self.slot9],
-        }
-      ]
-    ]
-
-    action_spaces = []
-    actions = []
-    for group in action_list:
-      group.append({
-        "name": 'NO OP',
-        "method": mind.no_op,
-        "arguments": [1],
-      })
-      action_spaces.append(len(group))
-      actions.append(group)
-
-    return actions, action_spaces
-
-PUL = ctypes.POINTER(ctypes.c_ulong)
-
-class KeyBdInput(ctypes.Structure):
-   _fields_ = [("wVk", ctypes.c_ushort),
-               ("wScan", ctypes.c_ushort),
-               ("dwFlags", ctypes.c_ulong),
-               ("time", ctypes.c_ulong),
-               ("dwExtraInfo", PUL)]
-
-
-class HardwareInput(ctypes.Structure):
-   _fields_ = [("uMsg", ctypes.c_ulong),
-               ("wParamL", ctypes.c_short),
-               ("wParamH", ctypes.c_ushort)]
-
-
-class MouseInput(ctypes.Structure):
-   _fields_ = [("dx", ctypes.c_long),
-               ("dy", ctypes.c_long),
-               ("mouseData", ctypes.c_ulong),
-               ("dwFlags", ctypes.c_ulong),
-               ("time", ctypes.c_ulong),
-               ("dwExtraInfo", PUL)]
-
-
-class Input_I(ctypes.Union):
-   _fields_ = [("ki", KeyBdInput),
-               ("mi", MouseInput),
-               ("hi", HardwareInput)]
-
-
-class Input(ctypes.Structure):
-   _fields_ = [("type", ctypes.c_ulong),
-("ii", Input_I)]
-
-class POINT(ctypes.Structure):
-    _fields_ = [("x", ctypes.c_long), ("y", ctypes.c_long)]
-
-def press_key(key):
-  extra = ctypes.c_ulong(0)
-  ii_ = Input_I()
-
-  flags = 0x0008
-
-  ii_.ki = KeyBdInput(0, key, flags, 0, ctypes.pointer(extra))
-  x = Input(ctypes.c_ulong(1), ii_)
-  ctypes.windll.user32.SendInput(1, ctypes.pointer(x), ctypes.sizeof(x))
-
-def release_key(key):
-  extra = ctypes.c_ulong(0)
-  ii_ = Input_I()
-
-  flags = 0x0008 | 0x0002
-
-  ii_.ki = KeyBdInput(0, key, flags, 0, ctypes.pointer(extra))
-  x = Input(ctypes.c_ulong(1), ii_)
-  ctypes.windll.user32.SendInput(1, ctypes.pointer(x), ctypes.sizeof(x))
-
-def cursor_position():
-  pt = POINT(0, 0)
-  ctypes.windll.user32.GetCursorPos(ctypes.byref(pt))
-  return [pt.x, pt.y]
-
-def mouse_down(x, y, type='left'):
-    if(type == 'left'):
-      button = win32con.MOUSEEVENTF_LEFTDOWN
-    else:
-      button = win32con.MOUSEEVENTF_RIGHTDOWN
-
-    #win32api.SetCursorPos((x, y))
-    win32api.mouse_event(button, x, y, 0, 0)
-    
-def mouse_up(x, y, type='left'):
-    if(type == 'left'):
-      button = win32con.MOUSEEVENTF_LEFTUP
-    else:
-      button = win32con.MOUSEEVENTF_RIGHTUP
-
-    #win32api.SetCursorPos((x, y))
-    win32api.mouse_event(button, x, y, 0, 0)
-    
-# Actuals Functions
-def mouse_move_to(x, y):
-    extra = ctypes.c_ulong(0)
-    ii_ = Input_I()
-    ii_.mi = MouseInput(x, y, 0, 0x0001, 0, ctypes.pointer(extra))
-
-    command = Input(ctypes.c_ulong(0), ii_)
-    ctypes.windll.user32.SendInput(1, ctypes.pointer(command), ctypes.sizeof(command))
-
-
-class WindowMgr():
-    """Encapsulates some calls to the winapi for window management"""
-
-    def __init__ (self):
-        """Constructor"""
-        self._handle = None
-        
-    def __about__(self):
-      """This is not my implementation. I found it somewhere on the
-      internet, presumably on StackOverflow.com and extended it by
-      the last method that returns the hwnd handle."""
-      pass
-
-    def find_window(self, class_name, window_name=None):
-        """find a window by its class_name"""
-        self._handle = win32gui.FindWindow(class_name, window_name)
-
-    def _window_enum_callback(self, hwnd, wildcard):
-        """Pass to win32gui.EnumWindows() to check all the opened windows"""
-        if re.match(wildcard, str(win32gui.GetWindowText(hwnd))) is not None:
-            self._handle = hwnd
-
-    def find_window_wildcard(self, wildcard):
-        """find a window whose title matches the wildcard regex"""
-        self._handle = None
-        win32gui.EnumWindows(self._window_enum_callback, wildcard)
-
-    def set_foreground(self):
-        """put the window in the foreground"""
-        win32gui.SetForegroundWindow(self._handle)
-
-    def get_hwnd(self):
-        """return hwnd for further use"""
-        return self._handle
-
-#timestamp_start = time.time()
-#s3 = boto3.client(
-#  "s3",
-#  aws_access_key_id = AWS_ACCESS_KEY,
-#  aws_secret_access_key = AWS_SECRET_KEY
-#)
-
-#bucket_resource = s3
-
-#bucket_resource.upload_file(
-#  Bucket = S3_BUCKET_NAME,
-#  Filename = os.path.join(SCREENSHOT_PATH, '2020-05-01_11.59.56.png'),
-#  Key='trial1.png'
-#)
-
-#timestamp_end = time.time()
-
-#print(str(timestamp_start - timestamp_end) + ' unix timestamp ticks')
-
-#print(time.time())
-#print(time.time())
-
-mcmind = Mind()
-done_model = CNNDone()
-done_model.load_state_dict(torch.load(DONE_STATEPATH))
-while True:
-  mcmind.look()
-  files = []
-  while len(files) == 0:
-    files = os.listdir(SCREENSHOT_PATH) #images = self.poll_for_screenshot(self.screenshot_path)
-    if(len(files) > 0):
-      files.sort(reverse=True)
-      state = os.path.join(SCREENSHOT_PATH, files[0])
-  im = None
-  retries = 0
-  while im == None:
-    try:
-      im = Image.open(state)
-    except: 
-      retries = retries + 1
-      time.sleep(0.05)
-      if retries > 100:
-        break
-  if im == None:
-    continue
-
-  r_im = done_model.process_image(im)
-  c_im = done_model.crop_image(im, r_im)
-  done = detect_is_done(c_im,done_model)
-  if done:
-    break
-  time.sleep(1)
-
-print('Complete')
