@@ -1,11 +1,13 @@
-import subprocess_maximize as subprocess, os, ctypes, time, pytesseract
+import subprocess_maximize as subprocess, os, ctypes, time
 import win32gui, win32api, win32con, pyautogui, re
 import numpy as np
 from PIL import Image
 from threading import Thread
 import boto3
 from config import AWS_ACCESS_KEY, AWS_SECRET_KEY, S3_LOCATION
-from config import S3_BUCKET_NAME, SCREENSHOT_PATH
+from config import S3_BUCKET_NAME, SCREENSHOT_PATH, DONE_STATEPATH, RESIZE_SIZE
+from cnn_done import CNNDone, detect_is_done
+import torch
 
 class Mind():
   proc = None
@@ -24,7 +26,7 @@ class Mind():
     if self.proc != None:
       self.proc.kill()
 
-  def __init__(self, tesseract_path, verbose = 'print', logger=None):
+  def __init__(self, verbose = 'print', logger=None):
     self.verbose_mode = verbose
     self.logger = logger
     self.output('Detecting resolution...')
@@ -32,7 +34,6 @@ class Mind():
     self.output('Resolution: ' + str(self.resolution[0]) + ' x ' + str(self.resolution[1]))
     self.window = WindowMgr()
     self.enumerate_actions()
-    pytesseract.pytesseract.tesseract_cmd = tesseract_path
     pyautogui.FAILSAFE = False
     
   def focus_minecraft_window(self, title='Minecraft 1*'):
@@ -180,7 +181,6 @@ class Mind():
     height = y2 - y
     im2 = im.crop((x, y, x2, y2))
     im2 = im2.convert("1", dither=Image.NONE).resize((int(width / 2), int(height / 2)))
-    text = pytesseract.image_to_string(im2)
     self.output(text)
     died = text.find('died') > -1
     self.output('Died: ' + str(died))
@@ -551,24 +551,59 @@ class WindowMgr():
         """return hwnd for further use"""
         return self._handle
 
-timestamp_start = time.time()
-s3 = boto3.client(
-  "s3",
-  aws_access_key_id = AWS_ACCESS_KEY,
-  aws_secret_access_key = AWS_SECRET_KEY
-)
+#timestamp_start = time.time()
+#s3 = boto3.client(
+#  "s3",
+#  aws_access_key_id = AWS_ACCESS_KEY,
+#  aws_secret_access_key = AWS_SECRET_KEY
+#)
 
-bucket_resource = s3
+#bucket_resource = s3
 
-bucket_resource.upload_file(
-  Bucket = S3_BUCKET_NAME,
-  Filename = os.path.join(SCREENSHOT_PATH, '2020-05-01_11.59.56.png'),
-  Key='trial1.png'
-)
+#bucket_resource.upload_file(
+#  Bucket = S3_BUCKET_NAME,
+#  Filename = os.path.join(SCREENSHOT_PATH, '2020-05-01_11.59.56.png'),
+#  Key='trial1.png'
+#)
 
-timestamp_end = time.time()
+#timestamp_end = time.time()
 
-print(str(timestamp_start - timestamp_end) + ' unix timestamp ticks')
+#print(str(timestamp_start - timestamp_end) + ' unix timestamp ticks')
 
-print(time.time())
-print(time.time())
+#print(time.time())
+#print(time.time())
+
+mcmind = Mind()
+done_model = CNNDone(int(RESIZE_SIZE * (600/800)), RESIZE_SIZE)
+done_model.load_state_dict(torch.load(DONE_STATEPATH))
+while True:
+  mcmind.look()
+  files = []
+  while len(files) == 0:
+    files = os.listdir(SCREENSHOT_PATH) #images = self.poll_for_screenshot(self.screenshot_path)
+    if(len(files) > 0):
+      files.sort(reverse=True)
+      state = os.path.join(SCREENSHOT_PATH, files[0])
+  im = None
+  retries = 0
+  while im == None:
+    try:
+      im = Image.open(state)
+    except: 
+      retries = retries + 1
+      time.sleep(0.05)
+      if retries > 100:
+        break
+  if im == None:
+    continue
+
+  r_im = done_model.process_image(im)
+  c_im = done_model.crop_image(im, r_im)
+  done = detect_is_done(c_im,done_model)
+  print('Done: ' + str(done))
+  quit()
+  if done:
+    break
+  time.sleep(1)
+
+print('Complete')
