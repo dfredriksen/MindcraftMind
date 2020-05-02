@@ -24,13 +24,9 @@ class CNNDone(nn.Module):
   test_y = None
   to_tensor = T.Compose([T.ToTensor()])
 
-  def __init__(self, w, h):
+  def __init__(self):
       super(CNNDone, self).__init__()
-      self.w = w
-      self.h = h
-      self.convw = self.conv2d_size_out(self.conv2d_size_out(w))
-      self.convh = self.conv2d_size_out(self.conv2d_size_out(h))
-      linear_input_size = self.convw * self.convh * 4
+      linear_input_size = 4 * 20 * 6
       self.cnn_layers = nn.Sequential(
         # Defining a 2D convolution layer
         nn.Conv2d(1, 4, kernel_size=3, stride=1, padding=1),
@@ -173,7 +169,7 @@ def predict_set(set_values, labels, model):
 
 def detect_is_done(np_value, model):
     value = Variable(torch.tensor([np_value]).unsqueeze(1)).float()
-    return bool(is_done(value, model))
+    return bool(is_done(value, model)[0])
 
 def is_done(value, model):
     with torch.no_grad():

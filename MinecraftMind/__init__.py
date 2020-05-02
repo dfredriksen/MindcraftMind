@@ -574,7 +574,7 @@ class WindowMgr():
 #print(time.time())
 
 mcmind = Mind()
-done_model = CNNDone(int(RESIZE_SIZE * (600/800)), RESIZE_SIZE)
+done_model = CNNDone()
 done_model.load_state_dict(torch.load(DONE_STATEPATH))
 while True:
   mcmind.look()
@@ -600,8 +600,6 @@ while True:
   r_im = done_model.process_image(im)
   c_im = done_model.crop_image(im, r_im)
   done = detect_is_done(c_im,done_model)
-  print('Done: ' + str(done))
-  quit()
   if done:
     break
   time.sleep(1)
