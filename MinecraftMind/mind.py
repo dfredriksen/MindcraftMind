@@ -359,6 +359,6 @@ class Mind():
 
   def perform_action(self, action):
     self.output('Performing action: ' + action["name"])
-    action_thread = ActionExecutor(action)
+    action_thread = ActionExecutor(action, self)
     action_thread.start()
     return action_thread
