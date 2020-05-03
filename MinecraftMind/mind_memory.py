@@ -1,5 +1,5 @@
 import boto3, os, io
-from config import AWS_ACCESS_KEY, AWS_SECRET_KEY, S3_BUCKET_NAME, S3_LOCATION, SCREENSHOT_PATH
+from config import AWS_ACCESS_KEY, AWS_SECRET_KEY, S3_BUCKET_NAME, SCREENSHOT_PATH
 from threading import Thread
 
 class Memory(Thread):
