@@ -55,7 +55,7 @@ class Actions():
   def __init__(self):
     return None
 
-  def enumerate_actions(self, mind):
+  def enumerate_actions(self):
     action_list = [
       [
         {
