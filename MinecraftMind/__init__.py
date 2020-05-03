@@ -1,6 +1,5 @@
-from mind import Mind
-
 def main():
+  from mind import Mind
   minecraft_mind = Mind()
   minecraft_mind.learning_loop()
 
