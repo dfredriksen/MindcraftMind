@@ -2,7 +2,10 @@ import subprocess_maximize as subprocess, os, time
 import win32gui, win32api, pyautogui
 import numpy as np
 from PIL import Image
-from config import AWS_ACCESS_KEY, ACTION_STATEPATH, AWS_SECRET_KEY, S3_BUCKET_NAME, SCREENSHOT_PATH, DONE_STATEPATH, RESIZE_SIZE,  EPS_START, EPS_END, EPS_DECAY, CLEAN_THREADS, MINECRAFT_LAUNCHER_PATH
+from config import AWS_ACCESS_KEY, ACTION_STATEPATH, AWS_SECRET_KEY
+from config import S3_BUCKET_NAME, SCREENSHOT_PATH, DONE_STATEPATH
+from config import RESIZE_SIZE,  EPS_START, EPS_END, EPS_DECAY
+from config import CLEAN_THREADS, MINECRAFT_LAUNCHER_PATH, LEARNING_HOST
 import torch
 import math
 from itertools import count
@@ -13,6 +16,7 @@ from mind_cnn_done import CNNDone, detect_is_done
 from mind_windows import WindowMgr
 from mind_input import mouse_move_to, mouse_down, mouse_up, press_key, release_key
 from mind_memory import Memory
+import requests
 
 class Mind():
   proc = None
@@ -43,14 +47,25 @@ class Mind():
     self.initialize_policy_net()    
     self.memory_threads = []
     self.state = None
+    self.policy_version = 1
+    self.policy_loaded = False
 
   def initialize_policy_net(self):
     self.output('Initializing Policy DQN...')
+    version = self.get_policy_version()
+    self.policy_version = version
     self.policy_net = DQN(self.sight_height, self.sight_width, self.n_actions).to(self.device)
-    if os.path.isfile(ACTION_STATEPATH):
-      self.output('Loading weights from file')
-      self.policy_net.load_state_dict(torch.path(ACTION_STATEPATH))
+    if int(version) > 1:
+      self.output("Loading policy version #" + version)
+      self.policy_net.load_state_dict(torch.hub.load_state_dict_from_url('http://' + LEARNING_HOST + "/policy?version=" + version))
       self.policy_net.eval()
+
+  def get_policy_version(self):
+    response = requests.get('http://' + LEARNING_HOST + "/version")
+    if response.status_code != 200:
+      print("Could not obtain policy version from the learning module!")
+      quit()
+    return response.text
 
   def initialize_actions(self):
     self.output('Initializing Available Actions...')
@@ -344,7 +359,7 @@ class Mind():
 
   def enumerate_actions(self):
     actions = Actions()
-    available_actions, action_space = actions.enumerate_actions(self)
+    available_actions, action_space = actions.enumerate_actions()
     self.actions = available_actions
     self.action_spaces = action_space
 
