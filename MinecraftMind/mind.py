@@ -165,7 +165,7 @@ class Mind():
       thread.join()
 
     im = self.get_state()
-    r_im = selccc.done_model.process_image(im)
+    r_im = self.done_model.process_image(im)
     self.state = r_im
     c_im = self.done_model.crop_image(im, r_im)
     done = detect_is_done(c_im, self.done_model)
