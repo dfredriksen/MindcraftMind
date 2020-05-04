@@ -6,6 +6,7 @@ from config import AWS_ACCESS_KEY, ACTION_STATEPATH, AWS_SECRET_KEY
 from config import S3_BUCKET_NAME, SCREENSHOT_PATH, DONE_STATEPATH
 from config import RESIZE_SIZE,  EPS_START, EPS_END, EPS_DECAY
 from config import CLEAN_THREADS, MINECRAFT_LAUNCHER_PATH, LEARNING_HOST
+from config import DEVICE
 import torch
 import math
 from itertools import count
@@ -16,6 +17,7 @@ from mind_cnn_done import CNNDone, detect_is_done
 from mind_windows import WindowMgr
 from mind_input import mouse_move_to, mouse_down, mouse_up, press_key, release_key
 from mind_memory import Memory
+from mind_policy import get_policy_version, PolicyLoader
 import requests
 
 class Mind():
@@ -37,9 +39,10 @@ class Mind():
 
   def __init__(self, verbose = 'print', logger=None):
     self.verbose_mode = verbose
+    self.policy_version = 1
     self.logger = logger
     self.detect_resolution()
-    self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    self.device = DEVICE
     self.window = WindowMgr()
     self.initialize_done_detector()
     self.initialize_actions()
@@ -47,25 +50,17 @@ class Mind():
     self.initialize_policy_net()    
     self.memory_threads = []
     self.state = None
-    self.policy_version = 1
-    self.policy_loaded = False
+    self.policy_loader = None
 
   def initialize_policy_net(self):
     self.output('Initializing Policy DQN...')
-    version = self.get_policy_version()
-    self.policy_version = version
+    version = get_policy_version()
     self.policy_net = DQN(self.sight_height, self.sight_width, self.n_actions).to(self.device)
-    if int(version) > 1:
+    if int(version) > 1 and int(version) != self.policy_version:
       self.output("Loading policy version #" + version)
       self.policy_net.load_state_dict(torch.hub.load_state_dict_from_url('http://' + LEARNING_HOST + "/policy?version=" + version))
       self.policy_net.eval()
-
-  def get_policy_version(self):
-    response = requests.get('http://' + LEARNING_HOST + "/version")
-    if response.status_code != 200:
-      print("Could not obtain policy version from the learning module!")
-      quit()
-    return response.text
+      self.policy_version = version
 
   def initialize_actions(self):
     self.output('Initializing Available Actions...')
@@ -130,23 +125,43 @@ class Mind():
             last_screen = current_screen
             current_screen = self.get_screen()
             if not done:
-                state = current_screen - last_screen
+                next_state = current_screen - last_screen
             else:
-                state = None
+                next_state = None
                 
-            memory = Memory(environment, filename, done, reward, self.trial, i_episode, steps_done, self.memory_threads)
+            memory = Memory(environment, filename, done, reward, self.trial, i_episode, steps_done, state, next_state, action_list, self.inventory, self.policy_version, self.memory_threads)
             memory.start()
             self.memory_threads.append(memory)
-
+            state = next_state
             if done:
                 self.output('Agent has died...')
                 self.clean_memory_threads()
+                self.output('Waiting for learning threads to complete...')
+                self.join_memory_threads()
+                self.initialize_policy_net()
                 break
             
             if steps_done % CLEAN_THREADS == 0:
                 self.clean_memory_threads()
 
-      
+            if self.policy_loader == None:
+              self.policy_loader = PolicyLoader(self.sight_height, self.sight_width, self.n_actions)
+              self.policy_loader.start()
+
+            if self.policy_loader.loaded:
+              if self.policy_loader.new_net != None:
+                self.policy_net = self.policy_loader.new_net
+                self.policy_version = self.policy_loader.new_version
+              self.policy_loader = None
+  def join_memory_threads(self):
+    new_memory_threads = []
+    for memory_thread in self.memory_threads:
+      if memory_thread.is_alive():
+        self.output("Waiting for thread " + memory_thread.name)
+        memory_thread.join()
+    self.output("All learning threads processed.")
+    self.memory_threads = []
+
   def clean_memory_threads(self):
     new_memory_threads = []
     for memory_thread in self.memory_threads:

@@ -1,18 +1,26 @@
 import boto3, os, io
-from config import AWS_ACCESS_KEY, AWS_SECRET_KEY, S3_BUCKET_NAME, SCREENSHOT_PATH
+from config import AWS_ACCESS_KEY, AWS_SECRET_KEY
+from config import S3_BUCKET_NAME, SCREENSHOT_PATH, LEARNING_HOST
 from threading import Thread
+import numpy as np
+import requests
 
 class Memory(Thread):
 
-  def __init__(self, environment, filename, done, reward, trial, episode, step, memory_threads):
+  def __init__(self, environment, filename, done, reward, trial, episode, step, state, next_state, action, inventory, version, memory_threads):
     Thread.__init__(self)
-    self.state = environment
+    self.image = environment
     self.filename = filename
     self.done = done
     self.trial = trial
     self.episode = episode
     self.step = step
     self.reward = reward
+    self.version = version
+    self.state = state
+    self.next_state = next_state
+    self.action = action
+    self.inventory = inventory
     self.memory_threads = memory_threads
 
   def run(self):
@@ -28,7 +36,8 @@ class Memory(Thread):
     )
     bucket_resource = s3
     in_mem_file = io.BytesIO()
-    self.state.save(in_mem_file, format=self.state.format)
+    image_array = np.array(self.image)
+    self.image.save(in_mem_file, format=self.image.format)
     data = in_mem_file.getvalue()
     bucket_resource.upload_file(
       Bucket = S3_BUCKET_NAME,
@@ -37,4 +46,20 @@ class Memory(Thread):
     )
     os.remove(filepath)
 
-    print("POST to endpoint goes here")
+    post_data = {
+      "image": image_array.tolist(),
+      "reward": self.reward,
+      "step": self.step,
+      "trial": self.trial,
+      "episode": self.episode,
+      "action": self.action,
+      "last_state": self.state,
+      "next_state": self.next_state,
+      "inventory": str(self.inventory),
+      "version": self.version
+    }
+
+    response = requests.post('http://' + LEARNING_HOST + '/optimize', data=post_data)
+    if response.status_code != 200:
+      print("Failed to POST step to server - step " + self.step)
+    
