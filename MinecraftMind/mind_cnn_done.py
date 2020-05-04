@@ -6,7 +6,7 @@ from torch.optim import Adam, SGD
 import os
 from PIL import Image
 import torchvision.transforms as T
-from config import RESIZE_SIZE, DONE_DATASET, DONE_STATEPATH, DEVICE
+from config import RESIZE_SIZE, DONE_DATASET, DONE_STATEPATH, DEVICE, RESOLUTION_HEIGHT, RESOLUTION_WIDTH
 import numpy as np
 from sklearn.model_selection import train_test_split
 import matplotlib.pyplot as plt
@@ -104,17 +104,18 @@ class CNNDone(nn.Module):
   def process_image_test(self, img_path):
     im = Image.open(img_path)
     r_im = self.process_image(im)
-    a_im = self.crop_image(im, r_im)
+    a_im = self.crop_image(r_im)
     return a_im
 
-  def crop_image(self, im, r_im):
-    w,h = im.size
+  def crop_image(self, r_im):
+    w,h = (RESOLUTION_WIDTH, RESOLUTION_HEIGHT)
     rw,rh = r_im.size
     wf = rw/w
     hf = rh/h
-    c_im = T.functional.crop(r_im, int(305*wf), int(115*hf), int(495*wf), int(160*hf))
+    c_im = T.functional.crop(r_im, int(115*hf), int(305*wf), int(160*hf), int(495*wf))
     b_im = c_im.convert("1", dither=Image.NONE)
     a_im = np.array(b_im).astype(float)
+    c_im.save('test.png')
     return a_im
 
   def process_image(self, im):
@@ -179,7 +180,8 @@ def is_done(value, model):
     prob = list(softmax.numpy())
     return np.argmax(prob, axis=1)
 
-def train_done_detector(epochs=25, w = 800, h = 600):
-  model = CNNDone()
+def train_done_detector(model = None, epochs=25, w = 800, h = 600):
+  if model == None:
+    model = CNNDone()
   model.load_training_data()
   train_model(epochs, model)

@@ -199,7 +199,7 @@ class Mind():
     im = self.get_state()
     r_im = self.done_model.process_image(im)
     self.state = r_im
-    c_im = self.done_model.crop_image(im, r_im)
+    c_im = self.done_model.crop_image(r_im)
     done = detect_is_done(c_im, self.done_model)
     reward = 0
     if done:
