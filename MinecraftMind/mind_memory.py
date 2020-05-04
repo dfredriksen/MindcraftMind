@@ -37,12 +37,12 @@ class Memory(Thread):
     bucket_resource = s3
     in_mem_file = io.BytesIO()
     image_array = np.array(self.image)
-    self.image.save(in_mem_file, format=self.image.format)
-    data = in_mem_file.getvalue()
-    bucket_resource.upload_file(
+    self.image.save(in_mem_file, format='png')
+    in_mem_file.seek(0)
+    bucket_resource.upload_fileobj(
       Bucket = S3_BUCKET_NAME,
-      Body = data,
-      Key=self.trial + "/" + self.episode + "/" + self.step + '.png'
+      Fileobj = in_mem_file,
+      Key=str(self.trial) + "/" + str(self.episode) + "/" + str(self.step) + '.png'
     )
     os.remove(filepath)
 
@@ -52,14 +52,18 @@ class Memory(Thread):
       "step": self.step,
       "trial": self.trial,
       "episode": self.episode,
-      "action": self.action,
-      "last_state": self.state,
-      "next_state": self.next_state,
+      "action": self.action.tolist(),
+      "last_state": self.state.tolist(),
       "inventory": str(self.inventory),
       "version": self.version
     }
 
-    response = requests.post('http://' + LEARNING_HOST + '/optimize', data=post_data)
+    if(self.next_state is None):
+      post_data['next_state'] = None
+    else:
+      post_data["next_state"]  = self.next_state.tolist()
+
+    response = requests.post('http://' + LEARNING_HOST + '/optimize', json=post_data)
     if response.status_code != 200:
-      print("Failed to POST step to server - step " + self.step)
-    
+      print("Failed to POST step to server - step " + str(self.step))
+      

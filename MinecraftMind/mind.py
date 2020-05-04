@@ -17,8 +17,9 @@ from mind_cnn_done import CNNDone, detect_is_done
 from mind_windows import WindowMgr
 from mind_input import mouse_move_to, mouse_down, mouse_up, press_key, release_key
 from mind_memory import Memory
-from mind_policy import get_policy_version, PolicyLoader
+from mind_policy import get_policy_version, download_policy, PolicyLoader
 import requests
+from pickle import loads
 
 class Mind():
   proc = None
@@ -58,7 +59,8 @@ class Mind():
     self.policy_net = DQN(self.sight_height, self.sight_width, self.n_actions).to(self.device)
     if int(version) > 1 and int(version) != self.policy_version:
       self.output("Loading policy version #" + version)
-      self.policy_net.load_state_dict(torch.hub.load_state_dict_from_url('http://' + LEARNING_HOST + "/policy?version=" + version))
+      download_policy(version)
+      self.policy_net.load_state_dict(torch.load(ACTION_STATEPATH))
       self.policy_net.eval()
       self.policy_version = version
 

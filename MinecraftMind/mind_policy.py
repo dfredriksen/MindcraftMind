@@ -1,7 +1,7 @@
 from threading import Thread, Event
 import requests
 from mind_dqn import DQN
-from config import DEVICE, LEARNING_HOST
+from config import DEVICE, LEARNING_HOST, ACTION_STATEPATH
 import torch
 
 class PolicyLoader(Thread):
@@ -18,7 +18,9 @@ class PolicyLoader(Thread):
         if(self.new_version == 1):
             self._stopevent.set()
         else:
-            self.new_net.load_state_dict(torch.hub.load_state_dict_from_url('http://' + LEARNING_HOST + "/policy?version=" + self.new_version))
+            download_policy(self.new_version)
+            self.new_net.load_state_dict(torch.load(ACTION_STATEPATH))
+            self.new_net.eval()
         self.loaded = True
 
 def get_policy_version():
@@ -28,3 +30,9 @@ def get_policy_version():
       return 1
     else:
       return response.text
+
+def download_policy(version):
+    response = requests.get('http://' + LEARNING_HOST + "/policy?version=" + version)
+    f = open(ACTION_STATEPATH, 'w+b')
+    f.write(response.content)
+    f.close()

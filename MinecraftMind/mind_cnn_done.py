@@ -180,6 +180,6 @@ def is_done(value, model):
     return np.argmax(prob, axis=1)
 
 def train_done_detector(epochs=25, w = 800, h = 600):
-  model = CNNDone(w, h)
+  model = CNNDone()
   model.load_training_data()
   train_model(epochs, model)
