@@ -142,7 +142,6 @@ class Mind():
                 self.output('Waiting for learning threads to complete...')
                 self.join_memory_threads()
                 self.initialize_policy_net()
-                quit()
                 break
             
             if steps_done % CLEAN_THREADS == 0:

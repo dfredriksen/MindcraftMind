@@ -115,7 +115,6 @@ class CNNDone(nn.Module):
     c_im = T.functional.crop(r_im, int(115*hf), int(305*wf), int(160*hf), int(495*wf))
     b_im = c_im.convert("1", dither=Image.NONE)
     a_im = np.array(b_im).astype(float)
-    c_im.save('test.png')
     return a_im
 
   def process_image(self, im):
