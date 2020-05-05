@@ -133,6 +133,7 @@ class Mind():
                 
             memory = Memory(environment, filename, done, reward, self.trial, i_episode, steps_done, state, next_state, action_list, self.inventory, self.policy_version, self.memory_threads)
             memory.start()
+            self.output("Starting memory thread:" + memory.name)
             self.memory_threads.append(memory)
             state = next_state
             if done:
@@ -141,6 +142,7 @@ class Mind():
                 self.output('Waiting for learning threads to complete...')
                 self.join_memory_threads()
                 self.initialize_policy_net()
+                quit()
                 break
             
             if steps_done % CLEAN_THREADS == 0:
@@ -155,8 +157,8 @@ class Mind():
                 self.policy_net = self.policy_loader.new_net
                 self.policy_version = self.policy_loader.new_version
               self.policy_loader = None
+
   def join_memory_threads(self):
-    new_memory_threads = []
     for memory_thread in self.memory_threads:
       if memory_thread.is_alive():
         self.output("Waiting for thread " + memory_thread.name)

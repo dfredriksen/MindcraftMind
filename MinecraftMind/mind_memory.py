@@ -24,10 +24,7 @@ class Memory(Thread):
     self.memory_threads = memory_threads
 
   def run(self):
-    for memory_thread in self.memory_threads:
-      if memory_thread.is_alive() and memory_thread.name != self.name:
-        memory_thread.join()
-
+    
     filepath = os.path.join(SCREENSHOT_PATH, self.filename)
     s3 = boto3.client(
       "s3",
@@ -66,4 +63,3 @@ class Memory(Thread):
     response = requests.post('http://' + LEARNING_HOST + '/optimize', json=post_data)
     if response.status_code != 200:
       print("Failed to POST step to server - step " + str(self.step))
-      

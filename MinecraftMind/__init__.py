@@ -10,7 +10,7 @@ def train_cnn_done():
   from config import DONE_STATEPATH
   import torch
   done_model = CNNDone()
-  #train_done_detector(done_model, 25)
+  train_done_detector(done_model, 100)
   #done_model.load_state_dict(torch.load(DONE_STATEPATH))
   #im = Image.open("C:\\Users\\dfred\\Downloads\\2.png")
   #r_im = done_model.process_image(im)
@@ -19,4 +19,5 @@ def train_cnn_done():
   #main()
 
 if __name__ == "__main__":
+  #train_cnn_done()
   main()
